@@ -1,0 +1,73 @@
+<?php
+
+namespace http;
+
+class Dispatcher {
+
+    public function run($app) {
+	$app->hooks->applyHook('before');
+
+	try {
+        	ob_start();
+        	$app->hooks->applyHook('before.router');
+		//parse the url and return route
+		$route=$app->router->parseUrl($app->request);
+        	$app->hooks->applyHook('after.router');
+
+
+		//parse route and instantiate controller
+		$route = trim($route, '/');
+
+		if($route==='')
+		    $route=$app->config('default.controller');
+
+		if (strpos($route, '/') === false) {
+		    $controller = $route;
+		    $action = $app->config('default.action');
+		    $route = $controller . '/' . $action;
+		} else {
+		    list($controller, $action) = explode('/', $route);
+		}
+
+
+		//now we need to find controller somewhere
+		$controllerClass = ucfirst(strtolower($controller)).'Controller';
+		$controllerPath = $app->config('app.path').'/controllers';
+		$file = $controllerPath . '/' . $controllerClass . '.php';
+
+		if (is_file($file)) {
+		    require $file;
+		} else {
+		    $app->error(404, "Controller $controllerClass for route '$route' not found");
+		}
+
+
+
+		//save the controller/action for further use
+		$app->config('c_controller', $controller);
+		$app->config('c_action', $action);
+		$app->config('c_route', $route);
+
+		//now initialize the controller and run action
+    		$instance = new $controllerClass([ 'action' => $action, 'id' => $controller ]);
+		$app->controller = $instance;
+
+
+		if(method_exists($instance,$action)) {
+		    $instance->$action();
+		} else
+		    $app->error(404, "Cannot call controller action for route '$route', missing action '$action'");
+
+		//success
+		$app->end();
+	    } catch (\EndException $e) {
+        	$app->response->write(ob_get_clean());
+        	$app->hooks->applyHook('after');
+	    }
+
+    	    // final output: Fetch status, header, and body
+    	    $app->response->output();
+    }
+
+
+}

@@ -1,0 +1,199 @@
+<?php
+namespace http;
+
+class Request extends \core\VObject {
+    private $_method = 'GET';
+
+
+    private $params = [];
+
+    // Strip slashes from string or array
+    protected static function _stripSlashes($rawData) {
+        return is_array($rawData) ? array_map(array('self', '_stripSlashes'), $rawData) : stripslashes($rawData);
+    }
+
+
+    protected function _init() {
+	if(isset($_GET))
+	    $_GET = $this->_stripSlashes($_GET);
+	if(isset($_POST))
+	    $_POST = $this->_stripSlashes($_POST);
+	if(isset($_REQUEST))
+	    $_REQUEST = $this->_stripSlashes($_REQUEST);
+	if(isset($_COOKIE))
+	    $_COOKIE = $this->_stripSlashes($_COOKIE);
+
+	//get query data
+	$this->params['query'] = $_GET;
+	$this->params['data'] = $_POST;
+	$this->params['cookies'] = $_COOKIE;
+	$this->params['files'] = $_FILES;
+
+
+	//get request method
+	if (isset($_POST['_method']))
+	    $this->params['method'] = strtoupper($_POST['_method']);
+	elseif (isset($_SERVER['REQUEST_METHOD']))
+	    $this->params['method'] = strtoupper($_SERVER['REQUEST_METHOD']);
+
+
+	if (isset($_POST['_method']) && $_POST['_method'] == 'DELETE') {
+	    //delete via post
+	    $this->params['delete'] = $_POST;
+	    unset($this->params['delete']['_method']);
+	} elseif ($_SERVER['REQUEST_METHOD'] == 'DELETE') {
+	    $this->params['delete'] = $this->_getRestParams();
+	} else {
+	    $this->params['delete'] = array();
+	}
+
+	if (isset($_POST['_method']) && $_POST['_method'] == 'PUT') {
+	    //put via post
+	    $this->params['put'] = $_POST;
+	    unset($this->params['put']['_method']);
+	} elseif ($_SERVER['REQUEST_METHOD'] == 'PUT') {
+	    $this->params['put'] = $this->_getRestParams();
+	} else {
+	    $this->params['put'] = [];
+	}
+
+	unset($_POST['_method']);
+
+
+	$this->params['referrer'] = isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : null;
+	$this->params['userAgent'] = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : null;
+//	$this->params['browser'] = get_browser($userAgent,true);
+	$this->params['httpAccept'] = isset($_SERVER['HTTP_ACCEPT']) ? $_SERVER['HTTP_ACCEPT'] : null;
+
+	$this->params['userIP'] = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '127.0.0.1';
+
+	$this->params['secure'] = !empty($_SERVER['HTTPS']) && strcasecmp($_SERVER['HTTPS'],'off');
+	$this->params['port'] = !$this->params['secure'] && isset($_SERVER['SERVER_PORT']) ? (int)$_SERVER['SERVER_PORT'] : 80;
+	$this->params['securePort'] = $this->params['secure'] && isset($_SERVER['SERVER_PORT']) ? (int)$_SERVER['SERVER_PORT'] : 443;
+	$this->params['schema'] = $this->params['secure'] ? 'https://' : 'http://';
+
+
+	$this->params['baseUrl'] = rtrim(dirname($_SERVER['PHP_SELF']), '\\/');
+	$this->params['requestUri'] = $_SERVER['REQUEST_URI'];
+	$this->params['url'] = $_SERVER['REQUEST_URI'];
+	$this->params['hostInfo'] = $this->_getHostInfo();
+	$this->params['scriptUrl'] = isset($_SERVER['SCRIPT_NAME']) ? $_SERVER['SCRIPT_NAME'] : $_SERVER['PHP_SELF'];
+	$this->params['pathInfo'] = $this->_getPathInfo();
+	$this->params['httpHost'] = rtrim(isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : $_SERVER['SERVER_NAME'], '.');
+
+
+
+	$this->params['isPost'] = $this->params['method'] == 'POST';
+	$this->params['isDelete'] = $this->params['method'] == 'DELETE';
+	$this->params['isPut'] = $this->params['method'] == 'PUT';
+	$this->params['isAjax'] = isset($_SERVER['HTTP_X_REQUESTED_WITH']) && $_SERVER['HTTP_X_REQUESTED_WITH']==='XMLHttpRequest';
+	$this->params['isFlash'] = isset($_SERVER['HTTP_USER_AGENT']) && (stripos($_SERVER['HTTP_USER_AGENT'],'Shockwave')!==false || stripos($_SERVER['HTTP_USER_AGENT'],'Flash')!==false);
+
+	//get script filename
+	$this->_scriptFile=realpath($_SERVER['SCRIPT_FILENAME']);
+    }
+
+
+
+    public function &__get($name) {
+	if (isset($this->params[$name]))
+	    return $this->params[$name];
+	$null = null;
+	return $null;
+	//throw new \Exception('ttttt');
+    }
+
+    public function getQueryParam($key, $default = null) {
+	if (isset($this->params['query'][$key]))
+	    return $this->params['query'][$key];
+	return $default;
+    }
+
+    public function getDataParam($key, $default = null) {
+	if (isset($this->params['data'][$key]))
+	    return $this->params['data'][$key];
+	return $default;
+    }
+
+    public function addParam($type = 'query', $name, $value) {
+	if (is_array($this->params[$type]))
+	    $this->params[$type][$name] = $value;
+	else
+	    $this->params[$type] = array($name => $value);
+    }
+
+
+    /**
+     * Returns the PUT or DELETE request parameters.
+     * @return array the request parameters
+     * @since 1.1.7
+     */
+    protected function _getRestParams() {
+	$result = [];
+	if(function_exists('mb_parse_str'))
+	    mb_parse_str(file_get_contents('php://input'), $result);
+	else
+	    parse_str(file_get_contents('php://input'), $result);
+	return $result;
+    }
+
+    public function _getHostInfo($secure = null, $hostInfo = null, $port = null) {
+	if ($secure === null) {
+	    $secure = $this->params['secure'];
+	}
+	if($secure)
+	    $schema='https://';
+	else
+	    $schema='http://';
+
+	if ($hostInfo === null) {
+	    if(isset($_SERVER['HTTP_HOST']))
+		$hostInfo = $_SERVER['HTTP_HOST'];
+	    else
+		$hostInfo = $_SERVER['SERVER_NAME'];
+	}
+	//SC: 20180622: added a rtrim to hostInfo
+	rtrim($hostInfo, '.');
+
+
+	if ($port === null) {
+	    $port = $secure ? $this->params['securePort'] : $this->params['port'];
+	}
+	$portInfo = '';
+	if(($port!==80 && !$secure) || ($port!==443 && $secure))
+		$portInfo = ':' . $port;
+
+	return $schema . $hostInfo . $portInfo;
+    }
+
+
+    /**
+     * Returns the path info of the currently requested URL.
+     * This refers to the part that is after the entry script and before the question mark.
+     * The starting and ending slashes are stripped off.
+     */
+    public function _getPathInfo() {
+	$pathInfo = $this->params['requestUri'];
+
+	if(($pos=strpos($pathInfo,'?'))!==false)
+	    $pathInfo=substr($pathInfo,0,$pos);
+
+	$pathInfo = urldecode($pathInfo);
+
+	$scriptUrl = $this->params['scriptUrl'];
+	$baseUrl = $this->params['baseUrl'];
+
+	if(strpos($pathInfo,$scriptUrl) === 0)
+	    $pathInfo = substr($pathInfo,strlen($scriptUrl));
+	else if($baseUrl === '' || strpos($pathInfo,$baseUrl) === 0)
+	    $pathInfo = substr($pathInfo,strlen($baseUrl));
+	else if(strpos($_SERVER['PHP_SELF'],$scriptUrl) === 0)
+	    $pathInfo = substr($_SERVER['PHP_SELF'],strlen($scriptUrl));
+	else
+	    throw new \ErrorException('Request is unable to determine the path info of the request.');
+
+	return trim($pathInfo,'/');
+    }
+}
+
+
